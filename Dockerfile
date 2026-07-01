@@ -1,20 +1,10 @@
-# ds4 (DwarfStar / DeepSeek-V4-Flash) container image for NVIDIA aarch64 CUDA boxes
-# with unified memory — built and tested on Jetson AGX Thor (sm_110), and intended to
-# also work on DGX Spark (GB10, sm_121) by setting DS4_CUDA_ARCH.
-#
-# Design:
-#   - Thin ubuntu:24.04 runtime; the ds4 binaries are prebuilt on the host (build.sh)
-#     and copied in from ./bin — no CUDA toolkit is baked into the image.
-#   - The CUDA runtime libs (libcudart/libcublas/libcublasLt) are bind-mounted from the
-#     host at /usr/local/cuda (see docker-compose.yml), so the image always matches the
-#     host toolkit and stays tiny.
-#   - libcuda.so (the driver) is injected by the NVIDIA container runtime.
-#   - Disk KV checkpoints persist to a host-mounted /kv-cache so a returning prompt can
-#     reload its KV instead of a multi-minute cold re-prefill.
+# ds4 (DeepSeek-V4-Flash) runtime image for aarch64 CUDA + unified-memory boxes.
+# Tested on Jetson AGX Thor (sm_110, CUDA 13); set DS4_CUDA_ARCH for other GPUs.
+# Binaries are prebuilt on the host (build.sh) and copied from ./bin. The CUDA runtime
+# is bind-mounted from the host (compose); libcuda comes from the nvidia runtime.
 FROM ubuntu:24.04
 
-# Build metadata (supplied by build.sh) so a regression can be attributed to ds4 vs the
-# CUDA/container environment. Inspect with: docker inspect <image> | grep -A15 Labels
+# Build metadata -> OCI labels (docker inspect). Set by build.sh.
 ARG DS4_GIT_COMMIT=unknown
 ARG DS4_CUDA_VERSION=unknown
 ARG DS4_CUDA_ARCH=sm_110
@@ -40,16 +30,14 @@ COPY bin/BUILD_INFO ./
 RUN chmod +x ./ds4 ./ds4-server ./ds4-bench ./ds4-eval ./ds4-agent \
     && mkdir -p /models /kv-cache /logs
 
-# CUDA runtime (bind-mounted at /usr/local/cuda) + NVIDIA-runtime driver injection.
-# targets/sbsa-linux/lib covers Thor/Spark (SBSA) layouts; lib64 covers others.
+# Bind-mounted CUDA runtime; sbsa path covers Thor/Spark, lib64 covers others.
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/targets/sbsa-linux/lib
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 EXPOSE 8000
-
 ENTRYPOINT ["/opt/ds4/ds4-server"]
-# Sane default; docker-compose.yml overrides this with .env-driven values.
+# Default run; compose overrides with .env values.
 CMD ["--cuda", "--host", "0.0.0.0", "--port", "8000", "-c", "65536", \
      "-m", "/models/model.gguf", \
      "--kv-disk-dir", "/kv-cache", "--kv-disk-space-mb", "16384", \

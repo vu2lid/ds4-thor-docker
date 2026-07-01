@@ -1,10 +1,4 @@
-# ds4 container stack. Configure via .env (copy .env.example -> .env first).
-#
-#   ./build.sh                       # build ds4 binaries (in your ds4 clone) + this image
-#   docker compose up -d             # start the server
-#   docker logs -f ds4               # wait for "listening on http://0.0.0.0:8000" (~100 s cold)
-#   curl -s localhost:${DS4_PORT:-8000}/v1/models
-#
+# Configure via .env (cp .env.example .env). Then: ./build.sh && docker compose up -d
 services:
   ds4:
     build:
@@ -27,15 +21,10 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
-      # CUDA runtime libs from the host (read-only) — keeps the image matched to the host toolkit.
-      - ${CUDA_DIR:-/usr/local/cuda}:/usr/local/cuda:ro
-      # Your downloaded GGUF model (read-only). MODEL_PATH is required (set it in .env).
-      - ${MODEL_PATH:?set MODEL_PATH to your .gguf in .env}:/models/model.gguf:ro
-      # Persistent disk KV checkpoints (read-write) — survives restarts/recreates so a
-      # returning prompt reloads KV from disk instead of a cold re-prefill.
-      - ${KV_DIR:-./kv-cache}:/kv-cache
-      # Optional request traces (only written if you add --trace below).
-      - ${LOG_DIR:-./logs}:/logs
+      - ${CUDA_DIR:-/usr/local/cuda}:/usr/local/cuda:ro          # host CUDA runtime libs
+      - ${MODEL_PATH:?set MODEL_PATH in .env}:/models/model.gguf:ro   # your GGUF model
+      - ${KV_DIR:-./kv-cache}:/kv-cache                          # persistent disk KV
+      - ${LOG_DIR:-./logs}:/logs                                 # optional --trace output
     command:
       - --cuda
       - --host
@@ -53,19 +42,13 @@ services:
       - --kv-cache-cold-max-tokens
       - "${KV_COLD_MAX:-65000}"
       - --kv-cache-reject-different-quant
-      # To enable request tracing (logs prompts/cache/tool-calls to /logs; grows fast):
-      # - --trace
-      # - /logs/ds4.trace
+      # Enable request tracing (grows fast): add  --trace  /logs/ds4.trace
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/v1/models >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 5
-      start_period: 240s   # cold model load can take ~100 s+
+      start_period: 240s   # cold model load ~100 s+
 
-# To route an OpenAI-compatible gateway (e.g. LiteLLM) to this by name, put both on the
-# same external docker network and uncomment below (then add `networks: [shared]` above):
-# networks:
-#   shared:
-#     external: true
-#     name: your-network
+# To route a gateway (LiteLLM etc.) by name, put both on one external network:
+# networks: [shared]  (add under the service) + a top-level networks: { shared: { external: true, name: <net> } }

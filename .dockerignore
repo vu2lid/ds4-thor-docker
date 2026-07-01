@@ -1,0 +1,5 @@
+# Only the staged binaries + BUILD_INFO belong in the build context.
+# (Keeps kv-cache/, logs/, .git, .env out of the image build.)
+*
+!bin/
+!bin/**

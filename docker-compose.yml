@@ -1,0 +1,71 @@
+# ds4 container stack. Configure via .env (copy .env.example -> .env first).
+#
+#   ./build.sh                       # build ds4 binaries (in your ds4 clone) + this image
+#   docker compose up -d             # start the server
+#   docker logs -f ds4               # wait for "listening on http://0.0.0.0:8000" (~100 s cold)
+#   curl -s localhost:${DS4_PORT:-8000}/v1/models
+#
+services:
+  ds4:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DS4_GIT_COMMIT: ${DS4_GIT_COMMIT:-unknown}
+        DS4_CUDA_VERSION: ${DS4_CUDA_VERSION:-unknown}
+        DS4_CUDA_ARCH: ${DS4_CUDA_ARCH:-sm_110}
+        DS4_MODEL_FILE: ${DS4_MODEL_FILE:-unknown}
+        DS4_MODEL_SIZE: ${DS4_MODEL_SIZE:-unknown}
+        DS4_BUILD_DATE: ${DS4_BUILD_DATE:-unknown}
+    image: ds4-thor:local
+    container_name: ds4
+    runtime: nvidia
+    restart: unless-stopped
+    ports:
+      - "${DS4_PORT:-8000}:8000"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      # CUDA runtime libs from the host (read-only) — keeps the image matched to the host toolkit.
+      - ${CUDA_DIR:-/usr/local/cuda}:/usr/local/cuda:ro
+      # Your downloaded GGUF model (read-only). MODEL_PATH is required (set it in .env).
+      - ${MODEL_PATH:?set MODEL_PATH to your .gguf in .env}:/models/model.gguf:ro
+      # Persistent disk KV checkpoints (read-write) — survives restarts/recreates so a
+      # returning prompt reloads KV from disk instead of a cold re-prefill.
+      - ${KV_DIR:-./kv-cache}:/kv-cache
+      # Optional request traces (only written if you add --trace below).
+      - ${LOG_DIR:-./logs}:/logs
+    command:
+      - --cuda
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - -c
+      - "${DS4_CTX:-65536}"
+      - -m
+      - /models/model.gguf
+      - --kv-disk-dir
+      - /kv-cache
+      - --kv-disk-space-mb
+      - "${KV_BUDGET_MB:-16384}"
+      - --kv-cache-cold-max-tokens
+      - "${KV_COLD_MAX:-65000}"
+      - --kv-cache-reject-different-quant
+      # To enable request tracing (logs prompts/cache/tool-calls to /logs; grows fast):
+      # - --trace
+      # - /logs/ds4.trace
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/v1/models >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 240s   # cold model load can take ~100 s+
+
+# To route an OpenAI-compatible gateway (e.g. LiteLLM) to this by name, put both on the
+# same external docker network and uncomment below (then add `networks: [shared]` above):
+# networks:
+#   shared:
+#     external: true
+#     name: your-network

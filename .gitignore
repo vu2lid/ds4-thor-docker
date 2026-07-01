@@ -1,0 +1,6 @@
+# Local config + build artifacts (never commit these)
+.env
+bin/
+kv-cache/
+logs/
+*.gguf

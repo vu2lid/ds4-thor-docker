@@ -13,9 +13,9 @@ include ds4 or any model weights — you clone/build ds4 and download the model 
 
 ## Why containerize it?
 
-- **Consistent runtime** across ds4/CUDA updates and reboots; managed like the rest of your stack.
-- **Stable endpoint** (OpenAI‑compatible API on `:8000`) for VS Code agents, Open WebUI, LiteLLM, etc.
-- **Persistent disk KV cache** (the big one) — see below.
+- **Consistent runtime** across ds4/CUDA updates and reboots via the standard Docker/Compose lifecycle.
+- **Stable endpoint** — OpenAI‑compatible API on `:8000` for any compatible client (e.g. VS Code agents, Open WebUI, LiteLLM).
+- **Persistent disk KV cache** — see below.
 - **Pinned build provenance** via image labels, so you can tell "ds4 regression" from
   "CUDA/container regression".
 
@@ -84,7 +84,7 @@ daemon is enabled on boot. (Caveat: a **manual** `docker stop` is remembered —
 will *not* auto‑start it; use `docker start ds4`.) Disk KV survives reboot, so the first prompts
 reload from `/kv-cache` rather than cold‑prefilling.
 
-## Gotchas & operational notes (learned the hard way)
+## Gotchas & operational notes
 
 - **Build for the right arch.** Thor is `sm_110`, **not** the Spark's `sm_121`. Verify native SASS:
   `cuobjdump ds4-server | grep arch` → `arch = sm_110`. (`build.sh` checks this.)

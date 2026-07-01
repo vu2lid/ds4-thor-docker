@@ -38,7 +38,7 @@ include ds4 or any model weights — you clone/build ds4 and download the model 
 ## Quick start
 
 ```sh
-git clone https://github.com/<you>/ds4-thor-docker && cd ds4-thor-docker
+git clone https://github.com/vu2lid/ds4-thor-docker && cd ds4-thor-docker
 cp .env.example .env && $EDITOR .env          # set DS4_SRC, MODEL_PATH, DS4_CUDA_ARCH, ...
 ./build.sh                                     # compiles ds4 for your arch + builds the image
 docker compose up -d

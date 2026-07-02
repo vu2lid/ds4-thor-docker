@@ -20,6 +20,8 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      # Avoids a cudaHostRegister hang that can wedge the GPU on large models — see README.
+      - DS4_CUDA_HOST_REGISTER_PLAIN=1
     volumes:
       - ${CUDA_DIR:-/usr/local/cuda}:/usr/local/cuda:ro          # host CUDA runtime libs
       - ${MODEL_PATH:?set MODEL_PATH in .env}:/models/model.gguf:ro   # your GGUF model

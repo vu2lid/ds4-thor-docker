@@ -88,7 +88,17 @@ reload from `/kv-cache` rather than cold‑prefilling.
 
 - **Build for the right arch.** Thor is `sm_110`, **not** the Spark's `sm_121`. Verify native SASS:
   `cuobjdump ds4-server | grep arch` → `arch = sm_110`. (`build.sh` checks this.)
-- **`CUDA host registration skipped: operation not supported`** at startup is **benign** on unified memory.
+- **`DS4_CUDA_HOST_REGISTER_PLAIN=1` (set by default in the compose) prevents a GPU-wedging hang.**
+  ds4 registers the model mmap with `Mapped|ReadOnly`. If that *fails* you see `CUDA host
+  registration skipped: operation not supported` and it uses a fast mmap path — benign. If it
+  *succeeds* (happens once there's enough free RAM to pin the whole model), the per‑tensor span
+  prep **hangs at ~80–90% with one core pegged and wedges the whole GPU/GSP** (`NVRM
+  rpcSendMessage failed … fn 76`; `nvidia-smi` and every GPU container die → reboot required).
+  `DS4_CUDA_HOST_REGISTER_PLAIN=1` drops the ReadOnly flag and lets it complete. (A `memlock`
+  ulimit does **not** constrain the pin — the driver manages it — so that's not a workaround.)
+- **Put the model on fast, reliable local storage.** The model is memory‑mapped and demand‑paged;
+  serving it from a slow/flaky disk (e.g. a USB‑SATA/NVMe bridge) can stall the mmap faults and
+  hang the box. Internal NVMe strongly preferred.
 - **Agent context window must match `DS4_CTX`.** ds4 hard‑rejects prompts ≥ context size with a
   `400 context_length_exceeded`. If your agent thinks the window is larger than the server's, it
   will overflow and its context‑condensing (which sends the whole history in one call) will fail

@@ -84,6 +84,28 @@ daemon is enabled on boot. (Caveat: a **manual** `docker stop` is remembered —
 will *not* auto‑start it; use `docker start ds4`.) Disk KV survives reboot, so the first prompts
 reload from `/kv-cache` rather than cold‑prefilling.
 
+## Memory footprint & coexistence
+
+The model is held **resident** in unified memory to serve at full speed — ~90 GB for the q2‑q4
+quant. On a 128 GB box that leaves little headroom for other GPU workloads (image generation, other
+LLMs) *while ds4 is loaded*. Things we measured trying to shrink it:
+
+- **SSD streaming** (`--ssd-streaming --ssd-streaming-cache-experts NGB`) streams experts from disk
+  instead of full residency, but decode dropped to **~1 t/s (≈8× slower)** even from internal NVMe —
+  this MoE activates too many experts per token. Not viable for interactive use.
+- **Skipping host‑registration** does *not* turn the model into reclaimable page cache — ds4 loads
+  weights into a CUDA device cache that still counts as *used*.
+- So there is **no config that keeps ds4 fast while shrinking its RAM** — a fast ~90 GB model must be resident.
+
+**`free` is misleading here.** After you stop ds4, the NVIDIA driver **lazy‑holds** its ~90 GB (it
+shows as `used`, `available` stays low), but the kernel **reclaims it on demand** — a fresh process
+can allocate that memory fine (verified: a 30 GiB allocation succeeds with ds4 "using" 117 G). So
+stopping ds4 really does free the RAM for other apps, even though `free` doesn't reflect it.
+
+**Practical answer: run ds4 on‑demand.** Stop it when you need the RAM (`docker stop ds4`), start it
+(~25 s from NVMe) when you want the agent. To automate this — ds4 **down by default, woken by the
+first request** and stopped after idle — see [`recipes/wake-on-request.md`](recipes/wake-on-request.md).
+
 ## Gotchas & operational notes
 
 - **Build for the right arch.** Thor is `sm_110`, **not** the Spark's `sm_121`. Verify native SASS:
@@ -107,8 +129,12 @@ reload from `/kv-cache` rather than cold‑prefilling.
 - **Single‑stream server.** ds4 processes one request at a time and keeps a single live KV cache;
   running two concurrent sessions makes them evict each other's cache (full cold re‑prefills). Run
   one heavy session at a time.
-- **Memory looks "stuck" after stopping ds4.** The NVIDIA driver retains freed unified memory in a
-  pool (shows as "used"); the next ds4 process reclaims it on demand (and reloads warm tensors fast).
+- **Memory looks "stuck" after stopping ds4** — see *Memory footprint & coexistence* above. The
+  driver lazy‑holds it but it's reclaimed on demand; `free` understates what's actually available.
+- **Don't experiment with ds4's memory/registration config on a live box.** An OOM during load or a
+  bad registration path can wedge the GPU/GSP (as above) and force a reboot. Change one variable at
+  a time, reboot to a clean driver pool between trials if needed, and keep a known‑good compose as
+  rollback. (We wedged the GPU twice learning this.)
 - **Profiling with Nsight Compute** (`ncu`) on Jetson: GPU counters are admin‑only
   (`RmProfilingAdminOnly: 1`) so run under `sudo`; set `DS4_LOCK_FILE=/tmp/…` (env) to dodge ds4's
   single‑instance lock; and use `--replay-mode application` (default kernel‑replay fails backing up

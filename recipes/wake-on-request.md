@@ -125,8 +125,22 @@ Traefik container: `http://waker-traefik:8000/v1`. Direct clients hit the host `
 
 - **`blocking.timeout` ≥ model load + healthcheck** — ~120 s is safe (load ~25 s from NVMe; the
   block holds until ds4 reports *healthy*).
-- **`sessionDuration`** — idle time before stop. Every request resets it. 30 m is a reasonable default.
+- **`sessionDuration`** — idle time before stop. Reasonable default 30 m. **⚠️ It's refreshed on
+  request *arrival*, not by an in-flight stream — so a single request that runs *longer* than
+  `sessionDuration` is stopped mid-generation** (the client gets `finish=error "client stream write
+  failed"` at exactly the session length). Don't just raise it (that delays freeing RAM). Instead
+  **cap the agent's output** so no single request approaches it — see below.
 - Set client/gateway request timeouts ≥ 60 s so the first (cold) request isn't dropped.
+
+### Cap agent output so it can't outlast the session
+A verbose agent (e.g. a code-review turn generating 13 k+ tokens ≈ 27 min at ~8 t/s) will cross a
+30 m session and get killed. Bound it well under `sessionDuration`:
+- Aider: set `max_output_tokens` low (e.g. **6000** ≈ ~12 min) in `~/.aider.model.metadata.json`,
+  and prompt for concise, severity-ranked output.
+- Any client: send a `max_tokens` on the request.
+
+30 m session + a ~6 k output cap leaves a wide margin (even a full 65 k prefill + 6 k decode is well
+under 30 m), while still freeing the RAM promptly when you stop working.
 
 ## Behavior
 

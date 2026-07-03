@@ -77,6 +77,17 @@ Reloading an ~11k‑token prefix took **~0.2–0.5 s** vs. **~75 s** to cold‑p
 **150–400×** on that prefix — and it survives restarts/reboots because the checkpoints are on the
 host. It also softens ds4's single‑stream KV eviction (evicted sequences spill to disk).
 
+**Size the budget for your agent, and know what "full" means.** `--kv-disk-space-mb` is a *budget*,
+not the filesystem — `kv cache evicted reason=disk-cache-full` means that budget filled, **not** that
+the disk is full. Agent sessions churn through many checkpoints (each turn saves one; 21k‑token
+prompts are ~300 MB each), so a small budget evicts the very prefixes you'd reuse next turn — which
+shows up as repeated full re‑prefills. If your KV dir is on a roomy disk, raise it generously
+(e.g. **`--kv-disk-space-mb 65536`** = 64 GiB) so prefix checkpoints survive across turns.
+
+Caveat: even with room, an agent that *reconstructs* its prompt each turn (e.g. Aider) can still miss
+the **live** cache (which needs an exact continuation → `reason=token-mismatch`); the disk cache is
+what recovers the shared prefix, so keeping it large is what helps.
+
 ## Reboot behavior
 
 The container uses `restart: unless-stopped`, so it comes back on reboot as long as the Docker
@@ -142,6 +153,9 @@ first request** and stopped after idle — see [`recipes/wake-on-request.md`](re
   won't isolate.
 - **MTP (speculative decoding) wasn't worth it** on the q2/q2‑q4 quants here: no speedup at
   `--mtp-draft 2`, and deeper drafts (`4/6`) were ~40% *slower* — draft tokens get rejected. Run plain greedy.
+- **Cap the agent's response length.** Unbounded output on a ~8 t/s model is expensive: a 13k‑token
+  review ≈ **27 min of decode**, which also bloats the next prompt and (with wake‑on‑request) can trip
+  the idle‑stop. Lower `max_output_tokens` (e.g. 6000) and prompt for concise, severity‑ranked answers.
 
 ## Rollback / uninstall
 

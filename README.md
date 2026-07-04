@@ -156,6 +156,8 @@ first request** and stopped after idle — see [`recipes/wake-on-request.md`](re
 - **Cap the agent's response length.** Unbounded output on a ~8 t/s model is expensive: a 13k‑token
   review ≈ **27 min of decode**, which also bloats the next prompt and (with wake‑on‑request) can trip
   the idle‑stop. Lower `max_output_tokens` (e.g. 6000) and prompt for concise, severity‑ranked answers.
+- *Using DS4 as an autonomous editor* ds4 is a lead-generator, not an autonomous editor; 
+  expect ~⅓ precision, always gate edits behind tsc/tests + human review
 
 ## Rollback / uninstall
 

@@ -117,10 +117,63 @@ stopping ds4 really does free the RAM for other apps, even though `free` doesn't
 (~25 s from NVMe) when you want the agent. To automate this — ds4 **down by default, woken by the
 first request** and stopped after idle — see [`recipes/wake-on-request.md`](recipes/wake-on-request.md).
 
+## Using `ds4-agent` (native coding agent)
+
+The image also ships `ds4-agent` (built alongside `ds4-server` by `build.sh`, copied into
+`/opt/ds4/ds4-agent`) — a terminal coding agent built directly into ds4: no HTTP/API layer, tool
+calls and file edits happen in‑process, and session state lives in an on‑disk KV cache
+(`~/.ds4/kvcache`, with `/save`, `/list`, `/switch`, `/del`, `/strip` commands). It's `alpha`
+upstream — expect sharp edges.
+
+**It loads its own copy of the model** rather than talking to an already‑running `ds4-server`, so it
+can't run alongside a live server container without a GPU‑memory conflict. Stop the server first:
+
+```sh
+docker compose stop ds4
+```
+
+Run it as a one‑off container (same mounts as the compose service, entrypoint overridden):
+
+```sh
+docker run --rm --runtime nvidia \
+  -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+  -e DS4_CUDA_HOST_REGISTER_PLAIN=1 \
+  -v "$CUDA_DIR":/usr/local/cuda:ro \
+  -v "$MODEL_PATH":/models/model.gguf:ro \
+  -v /path/to/your/project:/project \
+  --entrypoint /opt/ds4/ds4-agent \
+  ds4-thor:local \
+  --cuda -m /models/model.gguf -c "$DS4_CTX" --chdir /project --non-interactive \
+  -p "your instruction here"
+```
+
+`--non-interactive -p "..."` runs one turn and exits (scriptable, e.g. from CI or a wrapper script);
+drop `-p` for an interactive REPL instead. `--chdir` resolves relative file paths from your project
+root — get this wrong and it edits (or fails to find) the wrong files.
+
+Restart the server when you're done:
+
+```sh
+docker compose start ds4
+```
+
+The reliability caveats in *Gotchas & operational notes* below apply just as much here — having its
+own tool‑calling (it can search the codebase for callers, etc.) makes it a more capable
+*investigator*, not a more *correct* one.
+
 ## Gotchas & operational notes
 
 - **Build for the right arch.** Thor is `sm_110`, **not** the Spark's `sm_121`. Verify native SASS:
   `cuobjdump ds4-server | grep arch` → `arch = sm_110`. (`build.sh` checks this.)
+- **A running container does not pick up `.env` changes.** `restart: unless-stopped` keeps serving
+  with whatever values were in effect when the container was *created* — editing `MODEL_PATH` (or
+  anything else) in `.env` has no effect until you `docker compose up -d --force-recreate`. Worse: if
+  you bind‑mount a host path that doesn't currently exist (e.g. testing against a `MODEL_PATH` that's
+  since moved), Docker silently **creates an empty directory** there instead of erroring — it can look
+  like your multi‑GB model file vanished when it's actually just a stale path. Check what a *running*
+  container is actually using with
+  `docker inspect ds4 --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'`,
+  not just what `.env` currently says.
 - **`DS4_CUDA_HOST_REGISTER_PLAIN=1` (set by default in the compose) prevents a GPU-wedging hang.**
   ds4 registers the model mmap with `Mapped|ReadOnly`. If that *fails* you see `CUDA host
   registration skipped: operation not supported` and it uses a fast mmap path — benign. If it
@@ -156,8 +209,17 @@ first request** and stopped after idle — see [`recipes/wake-on-request.md`](re
 - **Cap the agent's response length.** Unbounded output on a ~8 t/s model is expensive: a 13k‑token
   review ≈ **27 min of decode**, which also bloats the next prompt and (with wake‑on‑request) can trip
   the idle‑stop. Lower `max_output_tokens` (e.g. 6000) and prompt for concise, severity‑ranked answers.
-- *Using DS4 as an autonomous editor* ds4 is a lead-generator, not an autonomous editor; 
-  expect ~⅓ precision, always gate edits behind tsc/tests + human review
+- **ds4 (and its native `ds4-agent`, see below) is a lead‑generator, not an autonomous editor.**
+  Across repeated trials on a real codebase: only **~⅓–⅖** of proposed fixes were correct even with
+  narrowly‑scoped SEARCH/REPLACE review; the *same* file/prompt/model produced different, sometimes
+  mutually‑exclusive proposed bugs across independent runs (one file hit its timeout in **7 of 7**
+  attempts, never converging); and a build/test gate reliably catches only what the test suite
+  already covers — several confirmed‑bad edits passed cleanly because the exact edge case they broke
+  wasn't tested. This isn't specific to one agent wrapper — `ds4-agent`'s own tool‑calling showed the
+  same failure modes as a generic API‑driven agent, and in one directly‑compared case its fix was
+  measurably *worse* than a simpler tool's fix for the identical bug. **Always gate behind build/tests
+  and require a human to read every surviving diff** — don't trust a single "no bugs found" or a
+  single "found a bug" verdict.
 
 ## Rollback / uninstall
 

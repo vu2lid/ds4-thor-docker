@@ -20,7 +20,33 @@ clients / OpenAI-compatible gateway ──> Traefik (:8000) ──[Sablier middl
 - **Sablier** starts/stops the ds4 container via the Docker socket and tracks idle time.
 - ds4 has no published port and `restart: no` — its lifecycle is Sablier's.
 
-Tested with `traefik:v3.3` + `sablierapp/sablier:1.8.1`.
+Tested with `traefik:v3.3` + `sablierapp/sablier:1.8.1`. Deployed and running this way in
+production (2026-07-14): waker stack lives at `/data/Workspace/ds4-waker/` (outside this repo,
+shared by ds4 plus the image-gen-stack comfyui/forge services), shared network is `llmnet`
+(not `ai-net` as used illustratively below — same pattern, just a different network name on
+that host).
+
+## ⚠️ Gotcha: containers need `init: true` or Sablier's stop can silently fail
+
+Without `init: true` on the managed service, its main process can end up an unkillable zombie
+on `docker stop`: Docker reports `PID ... is zombie and can not be killed. Use the --init
+option...` (or, seen on ds4 specifically, `tried to kill container, but did not receive an
+exit event`). Either way, Sablier's idle-timeout stop attempt fails **silently** — the
+container just keeps running forever, quietly defeating the whole point of this recipe. Add
+`init: true` to the service block; it runs `tini` as PID 1 so zombies get reaped and signals
+forwarded correctly. Cheap, no known downside — add it by default to any service you put
+behind Sablier this way, not just when you hit the symptom.
+
+## ⚠️ Gotcha: Sablier's own API is stateful — don't use it to check status
+
+`GET http://<sablier>:10000/api/strategies/blocking` (what the Traefik plugin calls
+internally) **renews the idle session** just like a real client request would, whether you
+meant it to or not. There is no side-effect-free way to query session state through it —
+`/api/health` and `/` both 404. If you `curl` this endpoint (or the Sablier-gated port itself)
+"just to check" whether a service has idled out, you will renew the very session you're trying
+to observe, and conclude the timeout isn't working when it actually is. **To check idle state,
+only use `docker inspect --format '{{.State.Status}}'` / `StartedAt`** — never HTTP, anywhere
+near the waker, for diagnostics.
 
 ## ⚠️ Gotcha that will bite you: Traefik's docker provider
 
